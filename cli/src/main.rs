@@ -60,6 +60,16 @@ fn print_json_error_with_type(message: impl AsRef<str>, error_type: &str) {
     }));
 }
 
+fn apply_hide_scrollbars_launch_option(
+    launch_cmd: &mut serde_json::Value,
+    cli_hide_scrollbars: bool,
+    hide_scrollbars: bool,
+) {
+    if cli_hide_scrollbars || !hide_scrollbars {
+        launch_cmd["hideScrollbars"] = json!(hide_scrollbars);
+    }
+}
+
 struct ParsedProxy {
     server: String,
     username: Option<String>,
@@ -1140,9 +1150,11 @@ fn main() {
             launch_cmd["allowFileAccess"] = json!(true);
         }
 
-        if !flags.hide_scrollbars {
-            launch_cmd["hideScrollbars"] = json!(false);
-        }
+        apply_hide_scrollbars_launch_option(
+            &mut launch_cmd,
+            flags.cli_hide_scrollbars,
+            flags.hide_scrollbars,
+        );
 
         if let Some(ref cs) = flags.color_scheme {
             launch_cmd["colorScheme"] = json!(cs);
@@ -1495,5 +1507,20 @@ mod tests {
             parsed["error"],
             "Daemon process exited during startup:\nline \"quoted\"\u{001b}[2mansi\u{001b}[22m"
         );
+    }
+
+    #[test]
+    fn test_hide_scrollbars_launch_option_serialization() {
+        let mut default_cmd = json!({ "action": "launch" });
+        apply_hide_scrollbars_launch_option(&mut default_cmd, false, true);
+        assert!(default_cmd.get("hideScrollbars").is_none());
+
+        let mut config_false_cmd = json!({ "action": "launch" });
+        apply_hide_scrollbars_launch_option(&mut config_false_cmd, false, false);
+        assert_eq!(config_false_cmd["hideScrollbars"], false);
+
+        let mut cli_true_cmd = json!({ "action": "launch" });
+        apply_hide_scrollbars_launch_option(&mut cli_true_cmd, true, true);
+        assert_eq!(cli_true_cmd["hideScrollbars"], true);
     }
 }
