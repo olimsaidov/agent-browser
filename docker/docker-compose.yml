@@ -16,19 +16,23 @@ services:
       - ../bin:/output
     command: |
       -c '
-        set -e
-        echo "Building for Linux platforms (parallel)..."
-        
-        # Build both targets in parallel
-        (echo "→ Linux x64" && cargo zigbuild --release --target x86_64-unknown-linux-gnu.2.28 && cp /build/target/x86_64-unknown-linux-gnu/release/agent-browser /output/agent-browser-linux-x64 && chmod +x /output/agent-browser-linux-x64 && echo "✓ Linux x64 done") &
-        PID1=$!
-        
-        (echo "→ Linux ARM64" && cargo zigbuild --release --target aarch64-unknown-linux-gnu.2.28 && cp /build/target/aarch64-unknown-linux-gnu/release/agent-browser /output/agent-browser-linux-arm64 && chmod +x /output/agent-browser-linux-arm64 && echo "✓ Linux ARM64 done") &
-        PID2=$!
-        
-        # Wait for both to complete
-        wait $$PID1 $$PID2
-        
+        set -euo pipefail
+        echo "Building for Linux platforms..."
+
+        rm -f /output/agent-browser-linux-x64 /output/agent-browser-linux-arm64
+
+        echo "→ Linux x64"
+        cargo zigbuild --release --target x86_64-unknown-linux-gnu.2.28
+        cp /build/target/x86_64-unknown-linux-gnu/release/agent-browser /output/agent-browser-linux-x64
+        chmod +x /output/agent-browser-linux-x64
+        echo "✓ Linux x64 done"
+
+        echo "→ Linux ARM64"
+        cargo zigbuild --release --target aarch64-unknown-linux-gnu.2.28
+        cp /build/target/aarch64-unknown-linux-gnu/release/agent-browser /output/agent-browser-linux-arm64
+        chmod +x /output/agent-browser-linux-arm64
+        echo "✓ Linux ARM64 done"
+
         echo ""
         echo "✓ Linux platforms built successfully!"
         ls -la /output/agent-browser-linux-*
@@ -45,12 +49,14 @@ services:
       - ../bin:/output
     command: |
       -c '
-        set -e
+        set -euo pipefail
         echo "Building for Windows x64..."
-        
+
+        rm -f /output/agent-browser-win32-x64.exe
+
         cargo build --release --target x86_64-pc-windows-gnu
         cp /build/target/x86_64-pc-windows-gnu/release/agent-browser.exe /output/agent-browser-win32-x64.exe
-        
+
         echo ""
         echo "✓ Windows build completed!"
         ls -la /output/agent-browser-win32-*
@@ -71,8 +77,18 @@ services:
       - OUTPUT_NAME=${OUTPUT_NAME:-agent-browser-linux-x64}
     command: |
       -c '
+        set -euo pipefail
+
+        rm -f /output/$$OUTPUT_NAME
+
         cargo zigbuild --release --target $$BUILD_TARGET
-        cp /build/target/$$RUST_TARGET/release/agent-browser* /output/$$OUTPUT_NAME
+
+        source_path=/build/target/$$RUST_TARGET/release/agent-browser
+        if [ -f "$$source_path.exe" ]; then
+          source_path="$$source_path.exe"
+        fi
+
+        cp "$$source_path" /output/$$OUTPUT_NAME
         chmod +x /output/$$OUTPUT_NAME 2>/dev/null || true
         echo "✓ Built $$OUTPUT_NAME"
       '

@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 # Build agent-browser for all platforms using Docker
 # Usage: ./scripts/build-all-platforms.sh
@@ -29,16 +29,25 @@ build_target() {
     local rust_target=$1
     local build_target=$2
     local output_name=$3
-    
+
     echo -e "${YELLOW}Building for ${build_target}...${NC}"
-    
+
+    rm -f "$OUTPUT_DIR/$output_name"
+
     docker run --rm \
         --platform linux/amd64 \
         -v "$PROJECT_ROOT/cli:/build" \
         -v "$OUTPUT_DIR:/output" \
         agent-browser-builder \
-        -c "cargo zigbuild --release --target ${build_target} && cp /build/target/${rust_target}/release/agent-browser* /output/${output_name} && chmod +x /output/${output_name} 2>/dev/null || true"
-    
+        -c "set -euo pipefail
+            cargo zigbuild --release --target ${build_target}
+            source_path=/build/target/${rust_target}/release/agent-browser
+            if [ -f \"\$source_path.exe\" ]; then
+                source_path=\"\$source_path.exe\"
+            fi
+            cp \"\$source_path\" /output/${output_name}
+            chmod +x /output/${output_name} 2>/dev/null || true"
+
     if [ -f "$OUTPUT_DIR/$output_name" ]; then
         echo -e "${GREEN}✓ Built ${output_name}${NC}"
     else
