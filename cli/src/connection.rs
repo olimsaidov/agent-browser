@@ -847,10 +847,28 @@ fn has_os_error(error: &str, code: u32) -> bool {
     error.contains(&format!("(os error {})", code))
 }
 
+/// Socket read timeout for one request. The 30s floor covers ordinary
+/// commands; commands carrying an explicit operation timeout (e.g.
+/// `wait --timeout 120000`) get that plus margin, so the daemon can report
+/// a proper operation timeout instead of the client dying with EAGAIN at
+/// 30s and the retry loop re-sending the whole long-running command.
+fn read_timeout_for(cmd: &Value) -> Duration {
+    let op_ms = cmd
+        .get("timeout")
+        .and_then(|v| v.as_u64())
+        .or_else(|| {
+            std::env::var("AGENT_BROWSER_DEFAULT_TIMEOUT")
+                .ok()
+                .and_then(|s| s.parse::<u64>().ok())
+        })
+        .unwrap_or(0);
+    Duration::from_millis(op_ms.saturating_add(10_000).max(30_000))
+}
+
 fn send_command_once(cmd: &Value, session: &str) -> Result<Response, String> {
     let mut stream = connect(session)?;
 
-    stream.set_read_timeout(Some(Duration::from_secs(30))).ok();
+    stream.set_read_timeout(Some(read_timeout_for(cmd))).ok();
     stream.set_write_timeout(Some(Duration::from_secs(5))).ok();
 
     let mut json_str = serde_json::to_string(cmd).map_err(|e| e.to_string())?;

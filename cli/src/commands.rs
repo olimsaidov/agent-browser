@@ -540,6 +540,27 @@ fn parse_command_inner(args: &[String], flags: &Flags) -> Result<Value, ParseErr
 
         // === Wait ===
         "wait" => {
+            // --timeout applies to EVERY wait variant (the docs advertise
+            // e.g. `wait --url "**/dashboard" --timeout 120000`); it used to
+            // be parsed only for --text/--download and silently ignored
+            // elsewhere. Extract it first so variants parse independently.
+            let mut rest = rest.clone();
+            let mut timeout_ms: Option<u64> = None;
+            if let Some(idx) = rest.iter().position(|&s| s == "--timeout") {
+                if let Some(Ok(ms)) = rest.get(idx + 1).map(|s| s.parse::<u64>()) {
+                    timeout_ms = Some(ms);
+                    rest.drain(idx..=idx + 1);
+                } else {
+                    rest.remove(idx);
+                }
+            }
+            let with_timeout = |mut cmd: Value| {
+                if let Some(ms) = timeout_ms {
+                    cmd["timeout"] = json!(ms);
+                }
+                cmd
+            };
+
             // Check for --url flag: wait --url "**/dashboard"
             if let Some(idx) = rest.iter().position(|&s| s == "--url" || s == "-u") {
                 let url = rest
@@ -548,7 +569,9 @@ fn parse_command_inner(args: &[String], flags: &Flags) -> Result<Value, ParseErr
                         context: "wait --url".to_string(),
                         usage: "wait --url <pattern>",
                     })?;
-                return Ok(json!({ "id": id, "action": "waitforurl", "url": url }));
+                return Ok(with_timeout(
+                    json!({ "id": id, "action": "waitforurl", "url": url }),
+                ));
             }
 
             // Check for --load flag: wait --load networkidle
@@ -559,7 +582,9 @@ fn parse_command_inner(args: &[String], flags: &Flags) -> Result<Value, ParseErr
                         context: "wait --load".to_string(),
                         usage: "wait --load <state>",
                     })?;
-                return Ok(json!({ "id": id, "action": "waitforloadstate", "state": state }));
+                return Ok(with_timeout(
+                    json!({ "id": id, "action": "waitforloadstate", "state": state }),
+                ));
             }
 
             // Check for --fn flag: wait --fn "window.ready === true"
@@ -570,10 +595,12 @@ fn parse_command_inner(args: &[String], flags: &Flags) -> Result<Value, ParseErr
                         context: "wait --fn".to_string(),
                         usage: "wait --fn <expression>",
                     })?;
-                return Ok(json!({ "id": id, "action": "waitforfunction", "expression": expr }));
+                return Ok(with_timeout(
+                    json!({ "id": id, "action": "waitforfunction", "expression": expr }),
+                ));
             }
 
-            // Check for --text flag: wait --text "Welcome" [--timeout ms]
+            // Check for --text flag: wait --text "Welcome"
             if let Some(idx) = rest.iter().position(|&s| s == "--text" || s == "-t") {
                 let text = rest
                     .get(idx + 1)
@@ -581,16 +608,12 @@ fn parse_command_inner(args: &[String], flags: &Flags) -> Result<Value, ParseErr
                         context: "wait --text".to_string(),
                         usage: "wait --text <text>",
                     })?;
-                let mut cmd = json!({ "id": id, "action": "wait", "text": text });
-                if let Some(t_idx) = rest.iter().position(|&s| s == "--timeout") {
-                    if let Some(Ok(ms)) = rest.get(t_idx + 1).map(|s| s.parse::<u64>()) {
-                        cmd["timeout"] = json!(ms);
-                    }
-                }
-                return Ok(cmd);
+                return Ok(with_timeout(
+                    json!({ "id": id, "action": "wait", "text": text }),
+                ));
             }
 
-            // Check for --download flag: wait --download [path] [--timeout ms]
+            // Check for --download flag: wait --download [path]
             if rest.iter().any(|&s| s == "--download" || s == "-d") {
                 let mut cmd = json!({ "id": id, "action": "waitfordownload" });
                 // Check for optional path (first non-flag argument after --download)
@@ -603,15 +626,7 @@ fn parse_command_inner(args: &[String], flags: &Flags) -> Result<Value, ParseErr
                         cmd["path"] = json!(path);
                     }
                 }
-                // Check for optional timeout
-                if let Some(idx) = rest.iter().position(|&s| s == "--timeout") {
-                    if let Some(timeout_str) = rest.get(idx + 1) {
-                        if let Ok(timeout) = timeout_str.parse::<u64>() {
-                            cmd["timeout"] = json!(timeout);
-                        }
-                    }
-                }
-                return Ok(cmd);
+                return Ok(with_timeout(cmd));
             }
 
             // Default: selector or timeout
@@ -619,7 +634,9 @@ fn parse_command_inner(args: &[String], flags: &Flags) -> Result<Value, ParseErr
                 if let Ok(timeout) = arg.parse::<u64>() {
                     Ok(json!({ "id": id, "action": "wait", "timeout": timeout }))
                 } else {
-                    Ok(json!({ "id": id, "action": "wait", "selector": arg }))
+                    Ok(with_timeout(
+                        json!({ "id": id, "action": "wait", "selector": arg }),
+                    ))
                 }
             } else {
                 Err(ParseError::MissingArguments {
