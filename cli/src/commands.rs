@@ -350,9 +350,36 @@ fn parse_command_inner(args: &[String], flags: &Flags) -> Result<Value, ParseErr
         "type" => {
             let sel = rest.first().ok_or_else(|| ParseError::MissingArguments {
                 context: "type".to_string(),
-                usage: "type <selector> <text>",
+                usage: "type <selector> <text> [--clear] [--delay <ms>]",
             })?;
-            Ok(json!({ "id": id, "action": "type", "selector": sel, "text": rest[1..].join(" ") }))
+            // The daemon has always supported clear/delay, but the CLI used
+            // to join every remaining arg into the text, so `--clear` was
+            // literally typed into the field with a success response.
+            let mut clear = false;
+            let mut delay: Option<u64> = None;
+            let mut text_parts: Vec<&str> = Vec::new();
+            let mut i = 1;
+            while i < rest.len() {
+                match rest[i] {
+                    "--clear" => clear = true,
+                    "--delay" => {
+                        if let Some(Ok(ms)) = rest.get(i + 1).map(|s| s.parse::<u64>()) {
+                            delay = Some(ms);
+                            i += 1;
+                        }
+                    }
+                    other => text_parts.push(other),
+                }
+                i += 1;
+            }
+            let mut cmd = json!({ "id": id, "action": "type", "selector": sel, "text": text_parts.join(" ") });
+            if clear {
+                cmd["clear"] = json!(true);
+            }
+            if let Some(ms) = delay {
+                cmd["delay"] = json!(ms);
+            }
+            Ok(cmd)
         }
         "hover" => {
             let sel = rest.first().ok_or_else(|| ParseError::MissingArguments {
