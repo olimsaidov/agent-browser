@@ -14,6 +14,9 @@ permissions:
 
 concurrency: publish-wasm-${{ github.ref }}
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   publish:
     name: Publish @olimsaidov/agent-browser-wasm
@@ -51,12 +54,32 @@ jobs:
         working-directory: packages/wasm-core/pkg
         run: npm pack --dry-run --json
 
+      - name: Check npm version
+        id: npm_version
+        working-directory: packages/wasm-core/pkg
+        run: |
+          version=$(node -p "require('./package.json').version")
+          published=$(npm view "@olimsaidov/agent-browser-wasm@$version" version --registry=https://registry.npmjs.org/ 2>/dev/null || true)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "published=$published" >> "$GITHUB_OUTPUT"
+
       - name: Publish dry run
         if: ${{ inputs.dry_run }}
-        working-directory: packages/wasm-core/pkg
-        run: npm publish --access public --dry-run
+        run: |
+          echo "Dry run completed for @olimsaidov/agent-browser-wasm@${{ steps.npm_version.outputs.version }}."
+          if [ -n "${{ steps.npm_version.outputs.published }}" ]; then
+            echo "Version is already published; a real publish run would stop before npm publish."
+          else
+            echo "Version is not published; a real publish run would publish it."
+          fi
+
+      - name: Stop if version exists
+        if: ${{ !inputs.dry_run && steps.npm_version.outputs.published != '' }}
+        run: |
+          echo "::error::@olimsaidov/agent-browser-wasm@${{ steps.npm_version.outputs.version }} is already published"
+          exit 1
 
       - name: Publish
-        if: ${{ !inputs.dry_run }}
+        if: ${{ !inputs.dry_run && steps.npm_version.outputs.published == '' }}
         working-directory: packages/wasm-core/pkg
         run: npm publish --access public
