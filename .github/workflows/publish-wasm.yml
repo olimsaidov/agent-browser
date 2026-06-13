@@ -1,0 +1,62 @@
+name: Publish WASM Package
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Run all release steps without publishing to npm
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency: publish-wasm-${{ github.ref }}
+
+jobs:
+  publish:
+    name: Publish @olimsaidov/agent-browser-wasm
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+          package-manager-cache: false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        run: cargo install wasm-pack --locked
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build package
+        run: pnpm --dir packages/wasm-core build
+
+      - name: Check package contents
+        working-directory: packages/wasm-core/pkg
+        run: npm pack --dry-run --json
+
+      - name: Publish dry run
+        if: ${{ inputs.dry_run }}
+        working-directory: packages/wasm-core/pkg
+        run: npm publish --access public --dry-run
+
+      - name: Publish
+        if: ${{ !inputs.dry_run }}
+        working-directory: packages/wasm-core/pkg
+        run: npm publish --access public

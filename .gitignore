@@ -67,3 +67,7 @@ docs/package-lock.json
 # next
 .next/
 out/
+
+# Generated WASM build output
+packages/wasm-core/pkg/
+packages/wasm-core/target/
