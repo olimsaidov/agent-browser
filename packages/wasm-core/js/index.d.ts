@@ -20,6 +20,10 @@ export type AgentBrowser = {
 export type CreateAgentBrowserOptions = {
   transport: CdpTransport;
   wasmUrl?: string | URL | Response | BufferSource | WebAssembly.Module;
+  /** Show the upstream pointer and click-feedback overlay in the controlled page. */
+  cursor?: boolean;
+  /** Default mouse movement mode; individual commands can override it. */
+  inputMode?: "instant" | "smooth" | "human";
 };
 
 export function createAgentBrowser(

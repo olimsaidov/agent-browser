@@ -45,9 +45,9 @@ yarn.lock
 # Environment
 .env
 .env.local
-
-# Windows debug instance config
-scripts/windows-debug/.instance
+.env.*
+!.env.example
+!.env.*.example
 
 # opensrc - source code for packages
 opensrc/
@@ -67,6 +67,7 @@ docs/package-lock.json
 # next
 .next/
 out/
+next-env.d.ts
 
 # Generated WASM build output
 packages/wasm-core/pkg/

@@ -1,6 +1,6 @@
 [package]
 name = "agent-browser-wasm"
-version = "0.27.3"
+version = "0.38.1"
 edition = "2021"
 description = "Run agent-browser in a browser with a supplied CDP transport"
 license = "Apache-2.0"

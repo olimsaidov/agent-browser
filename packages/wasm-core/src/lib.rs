@@ -12,6 +12,8 @@ mod flags;
 #[path = "../../../cli/src/validation.rs"]
 mod validation;
 
+include!(concat!(env!("OUT_DIR"), "/parser_support.rs"));
+
 mod commands {
     include!(concat!(env!("OUT_DIR"), "/commands.rs"));
 }
@@ -38,8 +40,8 @@ pub mod wasm_support {
     }
 }
 
-mod snapshot_format;
 mod runtime;
+mod snapshot_format;
 
 #[wasm_bindgen]
 pub async fn run_command_line(input: String, transport: js_sys::Function) -> String {

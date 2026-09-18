@@ -1,8 +1,8 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-use js_sys::{Function, Promise};
-use serde::Serialize;
+use js_sys::{Function, Promise, WeakMap};
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
@@ -13,8 +13,24 @@ use crate::flags::{self, Flags};
 use crate::output::OutputOptions;
 use crate::snapshot_format::{self, SnapshotRef};
 
+#[wasm_bindgen::prelude::wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(js_namespace = performance, js_name = now)]
+    fn monotonic_now() -> f64;
+    #[wasm_bindgen(js_name = setTimeout)]
+    fn set_timeout(callback: &Function, delay: f64);
+}
+
 thread_local! {
     static STATE: RefCell<WasmState> = RefCell::new(WasmState::default());
+    static MOUSE_STATES: WeakMap = WeakMap::new();
+}
+
+#[derive(Default, Deserialize, Serialize)]
+struct MouseState {
+    x: f64,
+    y: f64,
+    buttons: u32,
 }
 
 #[derive(Default)]
@@ -124,10 +140,16 @@ async fn run_agent_args(args: Vec<String>, transport: Function) -> RunOutput {
         return RunOutput::error(message);
     }
 
-    let command = match commands::parse_command(&clean, &flags) {
+    let mut command = match commands::parse_command(&clean, &flags) {
         Ok(command) => command,
         Err(error) => return RunOutput::error(error.format()),
     };
+    if !matches!(flags.input_mode.as_str(), "instant" | "smooth" | "human") {
+        return RunOutput::error("--input-mode must be instant, smooth, or human");
+    }
+    if command.get("inputMode").is_none() {
+        command["inputMode"] = json!(flags.input_mode);
+    }
     let action = command
         .get("action")
         .and_then(|value| value.as_str())
@@ -249,6 +271,12 @@ fn wasm_flags(args: &[String]) -> Flags {
                     index += 1;
                 }
             }
+            "--input-mode" => {
+                if let Some(value) = args.get(index + 1) {
+                    parsed.input_mode = value.clone();
+                    index += 1;
+                }
+            }
             "-v" | "--verbose" => parsed.verbose = true,
             "-q" | "--quiet" => parsed.quiet = true,
             _ => {}
@@ -259,67 +287,7 @@ fn wasm_flags(args: &[String]) -> Flags {
     parsed
 }
 
-fn default_flags() -> Flags {
-    Flags {
-        json: false,
-        headed: false,
-        debug: false,
-        session: "default".to_string(),
-        headers: None,
-        executable_path: None,
-        cdp: None,
-        extensions: Vec::new(),
-        init_scripts: Vec::new(),
-        enable: Vec::new(),
-        profile: None,
-        state: None,
-        proxy: None,
-        proxy_bypass: None,
-        args: None,
-        user_agent: None,
-        provider: None,
-        ignore_https_errors: false,
-        allow_file_access: false,
-        hide_scrollbars: true,
-        device: None,
-        auto_connect: false,
-        session_name: None,
-        annotate: false,
-        color_scheme: None,
-        download_path: None,
-        content_boundaries: false,
-        max_output: None,
-        allowed_domains: None,
-        action_policy: None,
-        confirm_actions: None,
-        confirm_interactive: false,
-        engine: None,
-        screenshot_dir: None,
-        screenshot_quality: None,
-        screenshot_format: None,
-        idle_timeout: None,
-        default_timeout: None,
-        no_auto_dialog: false,
-        model: None,
-        verbose: false,
-        quiet: false,
-        cli_executable_path: false,
-        cli_extensions: false,
-        cli_init_scripts: false,
-        cli_enable: false,
-        cli_profile: false,
-        cli_state: false,
-        cli_args: false,
-        cli_user_agent: false,
-        cli_proxy: false,
-        cli_proxy_bypass: false,
-        cli_allow_file_access: false,
-        cli_hide_scrollbars: false,
-        cli_annotate: false,
-        cli_download_path: false,
-        cli_headed: false,
-    }
-}
+include!(concat!(env!("OUT_DIR"), "/default_flags.rs"));
 
 fn parse_bool_arg(args: &[String], index: usize) -> (bool, bool) {
     match args.get(index + 1).map(|value| value.as_str()) {
@@ -381,6 +349,32 @@ impl WasmCdpClient {
             transport,
             session_id: None,
         }
+    }
+
+    fn mouse_state(&self) -> MouseState {
+        MOUSE_STATES.with(|states| {
+            states
+                .get(&self.transport)
+                .as_string()
+                .and_then(|text| serde_json::from_str(&text).ok())
+                .unwrap_or_default()
+        })
+    }
+
+    async fn mouse_event(&self, params: Value) -> Result<(), String> {
+        self.send_session("Input.dispatchMouseEvent", params.clone())
+            .await?;
+        let mut state = self.mouse_state();
+        state.x = params["x"].as_f64().unwrap_or(state.x);
+        state.y = params["y"].as_f64().unwrap_or(state.y);
+        state.buttons = params["buttons"].as_u64().unwrap_or(state.buttons as u64) as u32;
+        MOUSE_STATES.with(|states| {
+            states.set(
+                &self.transport,
+                &JsValue::from_str(&serde_json::to_string(&state).unwrap()),
+            );
+        });
+        Ok(())
     }
 
     async fn connect(&mut self) -> Result<(), String> {
@@ -492,6 +486,11 @@ async fn execute_action(command: &Value, client: &mut WasmCdpClient) -> Result<V
         "press" => press(command, client).await,
         "keyboard" => keyboard(command, client).await,
         "hover" => hover(command, client).await,
+        "mousemove" => mouse_move(command, client).await,
+        "mousedown" => mouse_button(command, client, true).await,
+        "mouseup" => mouse_button(command, client, false).await,
+        "wheel" => mouse_wheel(command, client).await,
+        "drag" => drag(command, client).await,
         "focus" => focus(command, client).await,
         "scroll" => scroll(command, client).await,
         "scrollintoview" => scroll_into_view(command, client).await,
@@ -630,8 +629,7 @@ async fn snapshot(command: &Value, client: &mut WasmCdpClient) -> Result<Value, 
     }))
 }
 
-async fn click(command: &Value, client: &mut WasmCdpClient, click_count: i64) -> Result<Value, String> {
-    let selector = required_string(command, "selector")?;
+async fn element_center(client: &mut WasmCdpClient, selector: &str) -> Result<(f64, f64), String> {
     let point = element_value(
         client,
         selector,
@@ -642,24 +640,156 @@ async fn click(command: &Value, client: &mut WasmCdpClient, click_count: i64) ->
         }"#,
     )
     .await?;
-    let x = point.get("x").and_then(|value| value.as_f64()).unwrap_or(0.0);
-    let y = point.get("y").and_then(|value| value.as_f64()).unwrap_or(0.0);
+    let x = point
+        .get("x")
+        .and_then(|value| value.as_f64())
+        .unwrap_or(0.0);
+    let y = point
+        .get("y")
+        .and_then(|value| value.as_f64())
+        .unwrap_or(0.0);
+    Ok((x, y))
+}
+
+async fn move_mouse(client: &WasmCdpClient, x: f64, y: f64, command: &Value) -> Result<(), String> {
+    let start = client.mouse_state();
+    let distance = (x - start.x).hypot(y - start.y);
+    let mode = command["inputMode"].as_str().unwrap_or("instant");
+    let human = mode == "human";
+    let mut duration = command["duration"].as_u64().unwrap_or(0);
+    if human && duration == 0 {
+        duration = (80.0 + distance * 0.35).clamp(100.0, 700.0) as u64;
+    }
+    let requested_steps = command["steps"]
+        .as_u64()
+        .map(|steps| steps.min(240) as usize)
+        .or_else(|| (mode == "instant" && duration == 0).then_some(1));
+    let steps = crate::motion::interpolated_mouse_steps(distance, duration, requested_steps, human);
+    let seed = command["seed"].as_u64().unwrap_or(0);
+    let bend = if human && distance > 0.0 {
+        let mixed = seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        let unit = ((mixed >> 11) as f64) / ((1_u64 << 53) as f64);
+        (unit * 2.0 - 1.0) * (distance * 0.08).min(36.0)
+    } else {
+        0.0
+    };
+    let (perp_x, perp_y) = if distance > 0.0 {
+        (-(y - start.y) / distance, (x - start.x) / distance)
+    } else {
+        (0.0, 0.0)
+    };
+    let started = monotonic_now();
+    for i in 1..=steps {
+        let (x, y) = crate::motion::interpolated_mouse_point(
+            start.x, start.y, x, y, perp_x, perp_y, bend, i, steps,
+        );
+        client
+            .mouse_event(json!({ "type": "mouseMoved", "x": x, "y": y, "buttons": start.buttons }))
+            .await?;
+        // One monotonic schedule includes transport latency, like the native client.
+        let remaining = started + duration as f64 * i as f64 / steps as f64 - monotonic_now();
+        if remaining > 0.0 {
+            JsFuture::from(Promise::new(&mut |resolve, _| {
+                set_timeout(&resolve, remaining)
+            }))
+            .await
+            .map_err(js_error)?;
+        }
+    }
+    Ok(())
+}
+
+async fn mouse_move(command: &Value, client: &WasmCdpClient) -> Result<Value, String> {
+    let x = command["x"].as_f64().unwrap_or(0.0);
+    let y = command["y"].as_f64().unwrap_or(0.0);
+    move_mouse(client, x, y, command).await?;
+    Ok(json!({ "moved": true, "x": x, "y": y }))
+}
+
+async fn mouse_button(
+    command: &Value,
+    client: &WasmCdpClient,
+    down: bool,
+) -> Result<Value, String> {
+    let state = client.mouse_state();
+    let button = command["button"].as_str().unwrap_or("left");
+    let mask = match button {
+        "left" => 1,
+        "right" => 2,
+        "middle" => 4,
+        "back" => 8,
+        "forward" => 16,
+        _ => return Err(format!("Invalid mouse button: {button}")),
+    };
+    let buttons = if down {
+        state.buttons | mask
+    } else {
+        state.buttons & !mask
+    };
     client
-        .send_session("Input.dispatchMouseEvent", json!({ "type": "mouseMoved", "x": x, "y": y }))
+        .mouse_event(json!({
+            "type": if down { "mousePressed" } else { "mouseReleased" },
+            "x": state.x, "y": state.y, "button": button, "buttons": buttons,
+            "clickCount": command["clickCount"].as_i64().unwrap_or(1),
+        }))
         .await?;
+    Ok(json!({ "button": button }))
+}
+
+async fn mouse_wheel(command: &Value, client: &WasmCdpClient) -> Result<Value, String> {
+    let state = client.mouse_state();
+    client
+        .mouse_event(json!({
+            "type": "mouseWheel", "x": state.x, "y": state.y, "buttons": state.buttons,
+            "deltaX": command["deltaX"].as_f64().unwrap_or(0.0),
+            "deltaY": command["deltaY"].as_f64().unwrap_or(0.0),
+        }))
+        .await?;
+    Ok(json!({ "scrolled": true }))
+}
+
+async fn drag(command: &Value, client: &mut WasmCdpClient) -> Result<Value, String> {
+    let (sx, sy) = element_center(client, required_string(command, "source")?).await?;
+    let (tx, ty) = element_center(client, required_string(command, "target")?).await?;
+    let human = command["inputMode"].as_str() == Some("human");
+    let mut movement = command.clone();
+    if !human {
+        movement["steps"] = json!(1);
+    }
+    move_mouse(client, sx, sy, &movement).await?;
+    mouse_button(&json!({ "button": "left" }), client, true).await?;
+    movement["duration"] = json!(if human { 250 } else { 100 });
+    if !human {
+        movement["steps"] = json!(10);
+    }
+    movement["seed"] = json!(command["seed"].as_u64().unwrap_or(0).wrapping_add(1));
+    let moved = move_mouse(client, tx, ty, &movement).await;
+    // Release even on a failed move so the next command does not inherit a held button.
+    let released = mouse_button(&json!({ "button": "left" }), client, false).await;
+    moved?;
+    released?;
+    Ok(json!({ "dragged": true }))
+}
+
+async fn click(
+    command: &Value,
+    client: &mut WasmCdpClient,
+    click_count: i64,
+) -> Result<Value, String> {
+    let selector = required_string(command, "selector")?;
+    let (x, y) = element_center(client, selector).await?;
+    let mut movement = command.clone();
+    if command["inputMode"].as_str() == Some("smooth") {
+        movement["duration"] = json!(200);
+    }
+    move_mouse(client, x, y, &movement).await?;
     for count in 1..=click_count {
-        client
-            .send_session(
-                "Input.dispatchMouseEvent",
-                json!({ "type": "mousePressed", "x": x, "y": y, "button": "left", "clickCount": count }),
-            )
-            .await?;
-        client
-            .send_session(
-                "Input.dispatchMouseEvent",
-                json!({ "type": "mouseReleased", "x": x, "y": y, "button": "left", "clickCount": count }),
-            )
-            .await?;
+        let button =
+            json!({ "button": command["button"].as_str().unwrap_or("left"), "clickCount": count });
+        mouse_button(&button, client, true).await?;
+        mouse_button(&button, client, false).await?;
     }
     Ok(json!({}))
 }
@@ -717,7 +847,10 @@ async fn press(command: &Value, client: &mut WasmCdpClient) -> Result<Value, Str
         )
         .await?;
     client
-        .send_session("Input.dispatchKeyEvent", json!({ "type": "keyUp", "key": key }))
+        .send_session(
+            "Input.dispatchKeyEvent",
+            json!({ "type": "keyUp", "key": key }),
+        )
         .await?;
     Ok(json!({}))
 }
@@ -737,21 +870,8 @@ async fn keyboard(command: &Value, client: &mut WasmCdpClient) -> Result<Value, 
 
 async fn hover(command: &Value, client: &mut WasmCdpClient) -> Result<Value, String> {
     let selector = required_string(command, "selector")?;
-    let point = element_value(
-        client,
-        selector,
-        r#"(element) => {
-            element.scrollIntoView({ block: "center", inline: "center" });
-            const box = element.getBoundingClientRect();
-            return { x: box.left + box.width / 2, y: box.top + box.height / 2 };
-        }"#,
-    )
-    .await?;
-    let x = point.get("x").and_then(|value| value.as_f64()).unwrap_or(0.0);
-    let y = point.get("y").and_then(|value| value.as_f64()).unwrap_or(0.0);
-    client
-        .send_session("Input.dispatchMouseEvent", json!({ "type": "mouseMoved", "x": x, "y": y }))
-        .await?;
+    let (x, y) = element_center(client, selector).await?;
+    move_mouse(client, x, y, command).await?;
     Ok(json!({}))
 }
 
@@ -828,7 +948,11 @@ async fn select(command: &Value, client: &mut WasmCdpClient) -> Result<Value, St
     Ok(json!({}))
 }
 
-async fn check(command: &Value, client: &mut WasmCdpClient, checked: bool) -> Result<Value, String> {
+async fn check(
+    command: &Value,
+    client: &mut WasmCdpClient,
+    checked: bool,
+) -> Result<Value, String> {
     let selector = required_string(command, "selector")?;
     element_value(
         client,
@@ -1034,7 +1158,11 @@ async fn styles(command: &Value, client: &mut WasmCdpClient) -> Result<Value, St
     Ok(json!({ "styles": styles }))
 }
 
-async fn state_check(command: &Value, client: &mut WasmCdpClient, kind: &str) -> Result<Value, String> {
+async fn state_check(
+    command: &Value,
+    client: &mut WasmCdpClient,
+    kind: &str,
+) -> Result<Value, String> {
     let selector = required_string(command, "selector")?;
     let expression = match kind {
         "visible" => {
@@ -1044,7 +1172,9 @@ async fn state_check(command: &Value, client: &mut WasmCdpClient, kind: &str) ->
                 return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
             }"#
         }
-        "enabled" => r#"(element) => !element.disabled && element.getAttribute("aria-disabled") !== "true""#,
+        "enabled" => {
+            r#"(element) => !element.disabled && element.getAttribute("aria-disabled") !== "true""#
+        }
         "checked" => {
             r#"(element) => Boolean(element.checked || element.getAttribute("aria-checked") === "true")"#
         }
@@ -1090,7 +1220,12 @@ async fn element_value(
             .get("object")
             .and_then(|object| object.get("objectId"))
             .and_then(|value| value.as_str())
-            .ok_or_else(|| format!("Ref is stale: @{}. Run agent-browser snapshot again.", ref_id))?;
+            .ok_or_else(|| {
+                format!(
+                    "Ref is stale: @{}. Run agent-browser snapshot again.",
+                    ref_id
+                )
+            })?;
         let result = client
             .send_session(
                 "Runtime.callFunctionOn",
@@ -1164,7 +1299,10 @@ fn runtime_result_value(response: &Value) -> Result<Value, String> {
     if let Some(value) = remote.get("value") {
         return Ok(value.clone());
     }
-    if let Some(value) = remote.get("unserializableValue").and_then(|value| value.as_str()) {
+    if let Some(value) = remote
+        .get("unserializableValue")
+        .and_then(|value| value.as_str())
+    {
         return Ok(Value::String(value.to_string()));
     }
     if let Some(value) = remote.get("description").and_then(|value| value.as_str()) {

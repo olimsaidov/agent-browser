@@ -1,9 +1,10 @@
 {
   "name": "@olimsaidov/agent-browser-wasm-source",
-  "version": "0.27.3",
+  "version": "0.38.1",
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "node scripts/clean-package.mjs && PATH=/opt/homebrew/opt/rustup/bin:$PATH wasm-pack build . --target web --out-dir pkg/wasm --out-name agent_browser_wasm --scope olimsaidov && node scripts/write-package.mjs"
+    "build": "node scripts/clean-package.mjs && PATH=/opt/homebrew/opt/rustup/bin:$PATH wasm-pack build . --target web --out-dir pkg/wasm --out-name agent_browser_wasm --scope olimsaidov && node scripts/write-package.mjs",
+    "test": "node --test tests/*.test.mjs"
   }
 }

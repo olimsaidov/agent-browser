@@ -1,4 +1,4 @@
-import { copyFile, mkdir, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -19,9 +19,17 @@ await copyFile(join(packageRoot, "js", "index.d.ts"), join(outDir, "index.d.ts")
 await copyFile(join(packageRoot, "README.md"), join(outDir, "README.md"));
 await copyFile(join(packageRoot, "..", "..", "LICENSE"), join(outDir, "LICENSE"));
 
+// Supplied CDP transports may emit synthetic pointer events. This cosmetic
+// overlay observes both kinds without changing the events' trust status.
+const cursorSource = await readFile(join(packageRoot, "../../cli/src/native/recording-cursor.js"), "utf8");
+const trustGuard = "!event.isTrusted || ";
+if (!cursorSource.includes(trustGuard)) throw new Error("Upstream cursor event guard changed");
+const cursorScript = `if (!globalThis.__agentBrowserRecordingCursorCleanup) {\n${cursorSource.replace(trustGuard, "")}\n}`;
+await writeFile(join(outDir, "cursor.js"), `export const cursorScript = ${JSON.stringify(cursorScript)};\n`);
+
 const packageJson = {
   name: "@olimsaidov/agent-browser-wasm",
-  version: "0.27.3",
+  version: JSON.parse(await readFile(join(packageRoot, "package.json"), "utf8")).version,
   description: "Run agent-browser in a browser with a supplied CDP transport",
   type: "module",
   license: "Apache-2.0",
@@ -30,7 +38,7 @@ const packageJson = {
     url: "git+https://github.com/olimsaidov/agent-browser.git",
     directory: "packages/wasm-core",
   },
-  files: ["index.js", "index.d.ts", "README.md", "LICENSE", "wasm/*"],
+  files: ["index.js", "index.d.ts", "cursor.js", "README.md", "LICENSE", "wasm/*"],
   exports: {
     ".": {
       types: "./index.d.ts",
