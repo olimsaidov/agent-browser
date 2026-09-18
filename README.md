@@ -12,10 +12,6 @@ Browser automation CLI for AI agents. Fast native Rust CLI.
 
 ## Installation
 
-### Browser-hosted WASM client (this fork)
-
-`@olimsaidov/agent-browser-wasm` runs supported commands through a supplied CDP transport without the native daemon. Its `createAgentBrowser({ transport, cursor: true, inputMode: "human" })` API enables visible pointer/click feedback and curved mouse movement. See [the browser package](packages/wasm-core/README.md) for installation, supported behavior, and native-only limitations. This fork publishes the WASM package only; native releases remain upstream.
-
 ### Global Installation (recommended)
 
 Installs the native Rust binary:

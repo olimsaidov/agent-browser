@@ -7,9 +7,6 @@
 //! parser and daemon as direct commands.
 //! Owned Windows Chrome uses the same private headless desktop and Job Object
 //! lifetime through MCP; headed and external-connection semantics are unchanged.
-//! The fork's browser-hosted WASM cursor/inputMode options configure its JavaScript
-//! adapter only; they are intentionally not separate native MCP tools. Native
-//! human movement continues to use the existing CLI-backed MCP input controls.
 
 use base64::{engine::general_purpose::STANDARD, Engine};
 use serde_json::{json, Value};

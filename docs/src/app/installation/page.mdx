@@ -1,9 +1,5 @@
 # Installation
 
-## Browser-hosted WASM client (this fork)
-
-Install `@olimsaidov/agent-browser-wasm` and call `createAgentBrowser` with a CDP `transport`. Optional `cursor: true` shows pointer and click feedback, while `inputMode: "human"` enables curved mouse movement. Commands can also use `--human`, such as `mouse move 240 160 --human` and `drag #source #target --human`. This adapter does not launch browsers or encode recordings; its live cursor is independent of the native recording command. See the [browser package documentation](https://github.com/olimsaidov/agent-browser/tree/main/packages/wasm-core).
-
 ## Global installation (recommended)
 
 Installs the native Rust binary for maximum performance:

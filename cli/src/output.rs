@@ -3795,11 +3795,6 @@ agent-browser - fast browser automation CLI for AI agents
 
 Usage: agent-browser <command> [args] [options]
 
-Browser-hosted API (this fork):
-  @olimsaidov/agent-browser-wasm accepts a CDP transport, cursor: true,
-  and inputMode: "human". See packages/wasm-core/README.md for limitations.
-  These are JavaScript API options, not native CLI flags.
-
 Start here (for AI agents):
   agent-browser skills get core --full
 

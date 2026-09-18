@@ -10,8 +10,6 @@ Fast browser automation CLI for AI agents. Chrome/Chromium via CDP, no Playwrigh
 
 Most normal web tasks (navigate, read, click, fill, extract, screenshot) are covered here. Load a specialized skill when the task falls outside browser web pages — see [When to load another skill](#when-to-load-another-skill).
 
-This fork also provides the browser-hosted `@olimsaidov/agent-browser-wasm` package. Its JavaScript API accepts `cursor: true` and `inputMode: "human"` in `createAgentBrowser` options. Use `agent.run("mouse move 240 160 --human")`, `click #submit --human`, or `drag #source #target --human` through a supplied CDP transport. These API options are not native CLI or MCP options, and the browser adapter does not support every native command (including recording, process management, and filesystem operations).
-
 ## The core loop
 
 Open the page and check the response for a WebMCP summary. If an advertised tool directly matches the authorized task, prefer that tool to reconstructing the same operation with DOM interactions. Fetch only its metadata, check the input schema and intended effect against the user request, then invoke it:
