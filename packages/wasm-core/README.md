@@ -39,6 +39,6 @@ await agent.run("drag #source #target --human");
 await agent.run(["mouse", "move", "400", "200", "--duration", "300", "--steps", "24"]);
 ```
 
-Mouse position and held buttons persist between commands for each agent instance. Human mode uses reproducible eased curves with exact endpoints and elapsed-time scheduling. The cursor overlay also observes synthetic pointer events from in-page CDP transports; it does not modify event trust.
+Mouse position and held buttons persist between commands for each agent instance. Human mode uses reproducible eased curves with exact endpoints and elapsed-time scheduling. The cursor overlay follows only this client's mouse commands, not physical mouse activity or page-generated pointer events; it does not modify event trust.
 
 This is a browser-hosted command adapter, not the native daemon. Browser/process management, filesystem operations, and recording/encoding commands remain unavailable. The live cursor option is not video recording, and a matching upstream version does not imply that every native command is supported.

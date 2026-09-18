@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "agent-browser-wasm"
-version = "0.38.1"
+version = "0.38.2"
 dependencies = [
  "base64",
  "dirs",

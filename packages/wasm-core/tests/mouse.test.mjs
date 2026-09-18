@@ -8,12 +8,14 @@ const wasmUrl = await readFile(new URL("../pkg/wasm/agent_browser_wasm_bg.wasm",
 async function fixture(options = {}) {
   const events = [];
   const evaluations = [];
+  const calls = [];
   let failHeldMove = false;
   const agent = await createAgentBrowser({
     wasmUrl,
     ...options,
     transport: {
-      async send(method, params = {}) {
+      async send(method, params = {}, sessionId) {
+        calls.push({ method, params, sessionId });
         if (method === "Target.getTargets") return { targetInfos: [{ targetId: "page", type: "page" }] };
         if (method === "Target.attachToTarget") return { sessionId: "session" };
         if (method === "Input.dispatchMouseEvent") {
@@ -30,7 +32,7 @@ async function fixture(options = {}) {
       },
     },
   });
-  return { agent, events, evaluations, failHeldMove: () => { failHeldMove = true; } };
+  return { agent, events, evaluations, calls, failHeldMove: () => { failHeldMove = true; } };
 }
 
 async function run(agent, command) {
@@ -39,10 +41,11 @@ async function run(agent, command) {
   return result;
 }
 
-test("uses the current upstream version and supports strings and argv", async () => {
+test("reports the WASM package version for both strings and argv", async () => {
   const { agent } = await fixture();
-  assert.equal((await run(agent, "--version")).stdout, "agent-browser 0.38.1");
-  assert.equal((await run(agent, ["--version"])).stdout, "agent-browser 0.38.1");
+  const { version } = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
+  assert.equal((await run(agent, "--version")).stdout, `agent-browser ${version}`);
+  assert.equal((await run(agent, ["--version"])).stdout, `agent-browser ${version}`);
 });
 
 test("instant movement stays opt-in-free and does not install a cursor", async () => {
@@ -105,18 +108,34 @@ test("held buttons and coordinates persist across mouse commands", async () => {
   assert.equal(events.at(-1).buttons, 0);
 });
 
-test("human click approaches the element and installs the cursor once per command", async () => {
-  const { agent, events, evaluations } = await fixture({ cursor: true });
+test("cursor updates follow each successful mouse command in its CDP session", async () => {
+  const { agent, events, evaluations, calls } = await fixture({ cursor: true });
   await run(agent, "click #target --human");
   assert.ok(events.length > 4);
   assert.deepEqual(events.slice(-2).map(({ type, buttons }) => [type, buttons]), [
     ["mousePressed", 1], ["mouseReleased", 0],
   ]);
-  const scripts = evaluations.filter((script) => script.includes("__agentBrowserRecordingCursorCleanup"));
-  assert.equal(scripts.length, 1);
-  assert.ok(!scripts[0].includes("!event.isTrusted"));
+  const scripts = evaluations.filter((script) => script.includes("agent-browser.wasm.cursor"));
+  assert.equal(scripts.length, events.length);
+  assert.ok(!scripts[0].includes("isTrusted"));
+  for (const [index, call] of calls.entries()) {
+    if (call.method !== "Input.dispatchMouseEvent") continue;
+    assert.equal(calls[index + 1].method, "Runtime.evaluate");
+    assert.equal(calls[index + 1].sessionId, call.sessionId);
+    const { type, x, y, buttons = 0 } = call.params;
+    assert.ok(calls[index + 1].params.expression.includes(JSON.stringify({ type, x, y, buttons })));
+  }
   await run(agent, "mouse move 20 30");
-  assert.equal(evaluations.filter((script) => script.includes("__agentBrowserRecordingCursorCleanup")).length, 2);
+  assert.equal(evaluations.filter((script) => script.includes("agent-browser.wasm.cursor")).length, events.length);
+});
+
+test("rejected mouse commands do not produce cursor feedback", async () => {
+  const { agent, evaluations, failHeldMove } = await fixture({ cursor: true });
+  await run(agent, "mouse down");
+  const count = evaluations.length;
+  failHeldMove();
+  assert.equal((await agent.run("mouse move 20 30")).ok, false);
+  assert.equal(evaluations.length, count);
 });
 
 test("drag keeps the button held through the curve and releases at the target", async () => {

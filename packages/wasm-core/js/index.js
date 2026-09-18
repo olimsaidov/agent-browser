@@ -2,7 +2,7 @@ import initWasm, {
   run_argv,
   run_command,
 } from "./wasm/agent_browser_wasm.js";
-import { cursorScript } from "./cursor.js";
+import { cursorExpression } from "./cursor.js";
 
 const defaultWasmUrl = new URL("./wasm/agent_browser_wasm_bg.wasm", import.meta.url);
 
@@ -34,23 +34,23 @@ function normalizeParams(paramsJson) {
 }
 
 function createRawTransport(transport, cursor) {
-  let cursorReady = false;
   return async (method, paramsJson, sessionId) => {
-    // Each command reconnects. Re-check after navigation or page-side cleanup.
-    if (method === "Runtime.enable" || method === "Page.navigate") cursorReady = false;
-    if (cursor && method === "Input.dispatchMouseEvent" && !cursorReady) {
-      const result = await transport.send("Runtime.evaluate", {
-        expression: cursorScript,
-        returnByValue: true,
-      }, sessionId || undefined);
-      if (result?.exceptionDetails) throw new Error("Could not initialize the cursor overlay");
-      cursorReady = true;
-    }
+    const params = normalizeParams(paramsJson);
     const result = await transport.send(
       method,
-      normalizeParams(paramsJson),
+      params,
       sessionId || undefined,
     );
+    // Only successful mouse commands from this client drive its visual feedback.
+    // No page pointer listeners: physical input and other clients stay independent.
+    if (cursor && method === "Input.dispatchMouseEvent" &&
+        ["mouseMoved", "mousePressed", "mouseReleased"].includes(params.type)) {
+      const rendered = await transport.send("Runtime.evaluate", {
+        expression: cursorExpression(params),
+        returnByValue: true,
+      }, sessionId || undefined);
+      if (rendered?.exceptionDetails) throw new Error("Could not update the cursor overlay");
+    }
     return JSON.stringify(result ?? {});
   };
 }
